@@ -95,7 +95,7 @@ def diffusion_map_interaction_score(
     epsilon: float,
     denominator_floor: float = 1e-14,
 ) -> np.ndarray:
-    """Diffusion-map approximation of ``grad log rho_i`` used in Eq. (23)."""
+    """Diffusion-map approximation of ``grad log rho_i`` used in Eq. (23). See ref [11]"""
     if epsilon <= 0.0:
         raise ValueError("epsilon must be positive")
 
