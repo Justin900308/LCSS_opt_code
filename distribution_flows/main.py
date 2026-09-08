@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-"""Run the constrained distributional six-flow example from Sec. VI."""
-# from __future__ import annotations
 
 import argparse
 from pathlib import Path
@@ -28,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--interaction",
         choices=INTERACTION_METHODS,
         default="diffusion_map",
-        help="Score approximation for grad log rho_i in Eq. (23).",
+        help="Score approximation for grad log rho_i in Eq. (23), see ref[11].",
     )
     parser.add_argument("--epsilon", type=float, default=0.03)
     parser.add_argument("--method", choices=ALL_METHODS, default="RK45")
