@@ -521,7 +521,6 @@ def trajectory_metrics(
 
 
 def __getattr__(name: str):
-    # Keeps the untouched plotting modules import-compatible.
-    if name == "Option" + "9SixFlowSystem":
+    if name ==  "SixFlowSystem":
         return SixFlowSystem
     raise AttributeError(name)

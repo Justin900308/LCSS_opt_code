@@ -5,7 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from functions import AnalyticalSolution, Option9SixFlowSystem
+from functions import AnalyticalSolution, SixFlowSystem
 from integrator import Trajectory
 
 # Use one consistent 16 pt font everywhere, including tick labels and legends.
@@ -74,7 +74,7 @@ def _particle_kde(
 def save_plots(
         trajectory: Trajectory,
         metrics: dict[str, np.ndarray],
-        system: Option9SixFlowSystem,
+        system: SixFlowSystem,
         optimum: AnalyticalSolution,
         output_dir: Path,
 ) -> list[Path]:
