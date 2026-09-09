@@ -48,7 +48,6 @@ class PopulationConfig:
 
     name: str
     feature_C: float
-    feature_d: float = 0.0
     initial_mean: float = 0.0
     initial_variance: float = 1.0
     target_weights: tuple[float, ...] = (1.0,)
@@ -78,7 +77,6 @@ class PopulationConfig:
         mean: float,
         variance: float,
         feature_C: float,
-        feature_d: float = 0.0,
         initial_mean: float = 0.0,
         initial_variance: float = 1.0,
     ) -> "PopulationConfig":
@@ -86,7 +84,6 @@ class PopulationConfig:
         return cls(
             name=name,
             feature_C=feature_C,
-            feature_d=feature_d,
             initial_mean=initial_mean,
             initial_variance=initial_variance,
             target_weights=(1.0,),
@@ -102,7 +99,6 @@ class PopulationConfig:
         means: tuple[float, ...],
         variances: tuple[float, ...],
         feature_C: float,
-        feature_d: float = 0.0,
         initial_mean: float = 0.0,
         initial_variance: float = 1.0,
     ) -> "PopulationConfig":
@@ -110,7 +106,6 @@ class PopulationConfig:
         return cls(
             name=name,
             feature_C=feature_C,
-            feature_d=feature_d,
             initial_mean=initial_mean,
             initial_variance=initial_variance,
             target_weights=weights,
@@ -132,7 +127,7 @@ class PopulationConfig:
 
     def feature(self, x: np.ndarray) -> np.ndarray:
         """Evaluate the affine moment feature defining r(rho)."""
-        return self.feature_C * np.asarray(x, dtype=float) + self.feature_d
+        return self.feature_C * np.asarray(x, dtype=float)
 
     def log_partition(self, multiplier: float) -> float:
         """Log partition of the exact KL exponential tilt."""
@@ -141,7 +136,7 @@ class PopulationConfig:
         variances = np.asarray(self.target_variances)
         linear = multiplier * self.feature_C
         terms = np.log(weights) - linear * means + 0.5 * linear**2 * variances
-        return float(-multiplier * self.feature_d + logsumexp(terms))
+        return float(logsumexp(terms))
 
     def tilted_parameters(
         self, multiplier: float
@@ -193,17 +188,12 @@ def analytical_constrained_solution(
     resource_target: float,
 ) -> AnalyticalSolution:
     """Solve the scalar KKT feasibility condition for rho_i^*."""
-    if abs(pop1.feature_C) + abs(pop2.feature_C) == 0.0:
-        raise ValueError("At least one feature coefficient must be nonzero.")
-
     def residual(multiplier: float) -> float:
         mean1, _ = pop1.tilted_moments(multiplier)
         mean2, _ = pop2.tilted_moments(multiplier)
         return float(
             pop1.feature_C * mean1
-            + pop1.feature_d
             + pop2.feature_C * mean2
-            + pop2.feature_d
             - resource_target
         )
 
@@ -215,6 +205,7 @@ def analytical_constrained_solution(
             left, right = -radius, radius
             f_left, f_right = residual(left), residual(right)
             if f_left >= 0.0 >= f_right:
+                break
                 break
             radius *= 2.0
         else:
@@ -320,8 +311,7 @@ class SixFlowSystem:
         x1_dot = exp_a * (u1 - x1)
         x2_dot = exp_a * (u2 - x2)
         multiplier_dot = exp_a * (multiplier_mirror - multiplier)
-
-        return np.concatenate(
+        output = np.concatenate(
             (
                 x1_dot,
                 -exp_a_plus_b * force1,
@@ -334,6 +324,8 @@ class SixFlowSystem:
                 ],
             )
         )
+
+        return output
 
 
 def time_coefficients(t: float, params: FlowParameters) -> tuple[float, float]:
@@ -457,16 +449,12 @@ def trajectory_metrics(
     var2 = np.var(x2, axis=1, ddof=1)
     residual = (
         system.pop1.feature_C * mean1
-        + system.pop1.feature_d
         + system.pop2.feature_C * mean2
-        + system.pop2.feature_d
         - system.resource_target
     )
     lookahead_residual = (
         system.pop1.feature_C * np.mean(u1, axis=1)
-        + system.pop1.feature_d
         + system.pop2.feature_C * np.mean(u2, axis=1)
-        + system.pop2.feature_d
         - system.resource_target
     )
 
