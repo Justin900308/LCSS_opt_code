@@ -176,7 +176,7 @@ def save_plots(
     # ------------------------------------------------------------------
     # Combined figure: 2 rows x 3 columns.
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(2, 3, figsize=(20.0, 11.5))
+    fig, axes = plt.subplots(3, 2, figsize=(16.0, 11.5))
 
     # ---------------- Top row: same convergence three columns ----------------
     axes[0, 0].set_xlim([0.1, 20])
@@ -215,49 +215,49 @@ def save_plots(
     axes[0, 1].set_ylabel("Objective gap")
     axes[0, 1].grid(True, which="both", alpha=0.3)
     axes[0, 1].legend(loc="best", frameon=True)
-    axes[0, 2].set_xlim([0.1, 20])
-    axes[0, 2].loglog(
+    axes[1, 0].set_xlim([0.1, 20])
+    axes[1, 0].loglog(
         t,
         residual_squared,
         linewidth=2.1,
         label=r"$|r|^2$",
     )
-    axes[0, 2].semilogy(
+    axes[1, 0].semilogy(
         t,
         constraint_ref_1 * 5,
         linestyle="--",
         linewidth=2.0,
         label=rf"$O((1+t)^{{-{2.0 * system.params.p:g}}})$",
     )
-    axes[0, 2].semilogy(
+    axes[1, 0].semilogy(
         t,
         constraint_ref_2 * 5,
         linestyle="-.",
         linewidth=2.0,
         label=rf"$O((1+t)^{{-{system.params.p:g}}})$",
     )
-    axes[0, 2].set_xlabel("time")
-    axes[0, 2].set_ylabel(r"Squared residue")
-    axes[0, 2].grid(True, which="both", alpha=0.3)
-    axes[0, 2].legend(loc="best", frameon=True)
+    axes[1, 0].set_xlabel("time")
+    axes[1, 0].set_ylabel(r"Squared residue")
+    axes[1, 0].grid(True, which="both", alpha=0.3)
+    axes[1, 0].legend(loc="best", frameon=True)
 
     # ---------------- Bottom-left: W2^2 plot ----------------
-    axes[1, 0].loglog(
+    axes[1, 1].loglog(
         t,
         w2_squared1,
         linewidth=2.1,
         label=r"$W_2^2(\rho_1(t),\rho_1^\star)$",
     )
-    axes[1, 0].semilogy(
+    axes[1, 1].semilogy(
         t,
         w2_squared2,
         linewidth=2.1,
         label=r"$W_2^2(\rho_2(t),\rho_2^\star)$",
     )
-    axes[1, 0].set_xlabel("time")
-    axes[1, 0].set_ylabel(r"Squared $W_2$")
-    axes[1, 0].grid(True, which="both", alpha=0.3)
-    axes[1, 0].legend(loc="best", frameon=True)
+    axes[1, 1].set_xlabel("time")
+    axes[1, 1].set_ylabel(r"Squared $W_2$")
+    axes[1, 1].grid(True, which="both", alpha=0.3)
+    axes[1, 1].legend(loc="best", frameon=True)
 
     # ---------------- Bottom-middle and bottom-right: compressed snapshots ----------------
     snapshot_time_labels = [
@@ -269,9 +269,9 @@ def save_plots(
     snapshot_linewidths = [2.2, 2.2, 2.2]
 
     for col, (history, population, rho_label) in enumerate(
-        zip(histories, populations, rho_labels), start=1
+        zip(histories, populations, rho_labels), start=0
     ):
-        ax = axes[1, col]
+        ax = axes[2, col]
         optimal_density = population.tilted_density(grid, optimum.multiplier)
 
         for idx, style, lw, time_label in zip(
