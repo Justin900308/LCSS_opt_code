@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 from scipy.optimize import brentq
-from scipy.special import logsumexp
+from scipy.special import logsumexp, ndtr
 
 from grad import (
     INTERACTION_METHODS,
@@ -432,6 +432,113 @@ def _population_support_points(
     )
 
 
+
+def _optimal_quantiles_at_probabilities(
+    population: PopulationConfig,
+    multiplier: float,
+    probabilities: np.ndarray,
+) -> np.ndarray:
+    """Invert the exact constrained-optimum CDF at requested probabilities.
+
+    This helper uses the analytical form already encoded by
+    ``PopulationConfig.tilted_parameters``.  Under the current model, an
+    affine exponential tilt of a Gaussian-mixture target remains an exact
+    Gaussian mixture.
+    """
+    probabilities = np.asarray(probabilities, dtype=float)
+    if probabilities.ndim != 1 or probabilities.size == 0:
+        raise ValueError("probabilities must be a nonempty one-dimensional array.")
+    if np.any((probabilities <= 0.0) | (probabilities >= 1.0)):
+        raise ValueError("probabilities must lie strictly between 0 and 1.")
+
+    weights, means, variances = population.tilted_parameters(multiplier)
+    std = np.sqrt(variances)
+
+    def cdf(x: float) -> float:
+        z = (x - means) / std
+        return float(np.sum(weights * ndtr(z)))
+
+    lower = float(np.min(means - 10.0 * std))
+    upper = float(np.max(means + 10.0 * std))
+
+    span = max(upper - lower, 1.0)
+    while cdf(lower) > float(np.min(probabilities)):
+        lower -= span
+        span *= 2.0
+
+    span = max(upper - lower, 1.0)
+    while cdf(upper) < float(np.max(probabilities)):
+        upper += span
+        span *= 2.0
+
+    return np.asarray(
+        [
+            brentq(
+                lambda x, q=q: cdf(x) - q,
+                lower,
+                upper,
+                xtol=1e-12,
+                rtol=1e-12,
+            )
+            for q in probabilities
+        ],
+        dtype=float,
+    )
+
+
+def _empirical_w2_squared_series(
+    particle_history: np.ndarray,
+    population: PopulationConfig,
+    multiplier: float,
+    quadrature_order: int = 8,
+) -> np.ndarray:
+    r"""Compute 1D W_2^2 between an empirical law and rho^*.
+
+    For equal-weight particles x_(1) <= ... <= x_(N), the empirical quantile
+    is piecewise constant,
+
+        Q_N(u) = x_(j),   u in ((j-1)/N, j/N].
+
+    Hence
+
+        W_2^2(rho_N, rho^*)
+          = sum_j int_{(j-1)/N}^{j/N} |x_(j) - Q^*(u)|^2 du.
+
+    The probability integrals are evaluated with Gauss-Legendre quadrature.
+    No parametric model is assumed for the current particle distribution.
+    """
+    history = np.asarray(particle_history, dtype=float)
+    if history.ndim != 2:
+        raise ValueError("particle_history must have shape (n_times, n_particles).")
+    if quadrature_order < 2:
+        raise ValueError("quadrature_order must be at least 2.")
+
+    n_particles = history.shape[1]
+    nodes, weights = np.polynomial.legendre.leggauss(quadrature_order)
+
+    # Map the Gauss-Legendre nodes from [-1,1] into each empirical quantile
+    # interval ((j-1)/N, j/N).  These probabilities are strictly inside (0,1).
+    j = np.arange(n_particles, dtype=float)[:, None]
+    probabilities = (j + 0.5 * (nodes[None, :] + 1.0)) / n_particles
+    flat_probabilities = probabilities.ravel()
+
+    optimal_quantiles = _optimal_quantiles_at_probabilities(
+        population, multiplier, flat_probabilities
+    ).reshape(n_particles, quadrature_order)
+
+    sorted_particles = np.sort(history, axis=1)
+    squared_difference = (
+        sorted_particles[:, :, None] - optimal_quantiles[None, :, :]
+    ) ** 2
+
+    # Each interval has width 1/N. Mapping [-1,1] to that interval contributes
+    # the factor 1/(2N).
+    return np.sum(
+        squared_difference * weights[None, None, :] / (2.0 * n_particles),
+        axis=(1, 2),
+    )
+
+
 def trajectory_metrics(
     trajectory: "Trajectory",
     system: SixFlowSystem,
@@ -489,6 +596,17 @@ def trajectory_metrics(
         (var1 - optimum.variance1) ** 2 + (var2 - optimum.variance2) ** 2
     )
 
+    # 1D squared 2-Wasserstein distance to the constrained optimum.
+    # The current laws are empirical particle distributions and need no
+    # Gaussian/GMM approximation: sorting gives their exact empirical quantiles.
+    w2_squared1 = _empirical_w2_squared_series(
+        x1, system.pop1, optimum.multiplier
+    )
+    w2_squared2 = _empirical_w2_squared_series(
+        x2, system.pop2, optimum.multiplier
+    )
+    w2_squared = w2_squared1 + w2_squared2
+
     return {
         "x1": x1,
         "u1": u1,
@@ -515,6 +633,9 @@ def trajectory_metrics(
         "dual_invariant_error": dual_invariant_error,
         "mean_error": mean_error,
         "variance_error": variance_error,
+        "w2_squared1": w2_squared1,
+        "w2_squared2": w2_squared2,
+        "w2_squared": w2_squared,
         "multiplier_error": np.abs(multiplier - optimum.multiplier),
         "multiplier_mirror_error": np.abs(multiplier_mirror - optimum.multiplier),
     }

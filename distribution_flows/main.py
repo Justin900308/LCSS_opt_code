@@ -1,6 +1,6 @@
-
 import argparse
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -14,7 +14,7 @@ from functions import (
 )
 from grad import INTERACTION_METHODS
 from integrator import ALL_METHODS, integrate
-from plotting_separated import save_plots, show_all_plots
+from plotting_new import save_plots, show_all_plots
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-step", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=4)
     parser.add_argument("--output-dir", default="distribution_six_flow_output")
+    parser.add_argument("--force-recompute", action="store_true")
     parser.add_argument("--no-show", dest="show", action="store_false")
     parser.set_defaults(show=True)
     return parser
@@ -88,32 +89,70 @@ def main() -> None:
         interaction_method=args.interaction,
     )
 
-    optimum = analytical_constrained_solution(pop1, pop2, args.resource_target)
-    y0 = initial_state(system, args.t0, args.seed)
-
-    trajectory = integrate(
-        system=system,
-        t_span=(args.t0, args.t0 + args.horizon),
-        y0=y0,
-        method=args.method,
-        output_samples=args.samples,
-        rtol=args.rtol,
-        atol=args.atol,
-        max_step=args.max_step,
+    optimum = analytical_constrained_solution(
+        pop1, pop2, args.resource_target
     )
-    if not trajectory.success:
-        raise RuntimeError(trajectory.message)
 
-    # Eqs. (21) and (32) diagnostics used by the unchanged plots.
-    metrics = trajectory_metrics(trajectory, system, optimum)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    save_plots(trajectory, metrics, system, optimum, output_dir)
 
+    data_file = output_dir / "trajectory_distribution_six_flow.npz"
+
+    # Reuse an existing trajectory unless explicitly asked to recompute.
+    if data_file.exists() and not args.force_recompute:
+        print(f"Loading existing trajectory: {data_file}")
+
+        data = np.load(data_file)
+
+        trajectory = SimpleNamespace(
+            t=data["t"],
+            y=data["y"],
+            success=True,
+            message="Loaded from saved data.",
+            runtime_seconds=float(data["runtime_seconds"])
+            if "runtime_seconds" in data
+            else np.nan,
+        )
+
+    else:
+        if args.force_recompute and data_file.exists():
+            print("Force recompute requested; ignoring existing trajectory.")
+        else:
+            print("No existing trajectory found; computing from start.")
+
+        y0 = initial_state(system, args.t0, args.seed)
+
+        trajectory = integrate(
+            system=system,
+            t_span=(args.t0, args.t0 + args.horizon),
+            y0=y0,
+            method=args.method,
+            output_samples=args.samples,
+            rtol=args.rtol,
+            atol=args.atol,
+            max_step=args.max_step,
+        )
+
+        if not trajectory.success:
+            raise RuntimeError(trajectory.message)
+
+    # Always recompute diagnostics from the trajectory.
+    metrics = trajectory_metrics(trajectory, system, optimum)
+
+    save_plots(
+        trajectory,
+        metrics,
+        system,
+        optimum,
+        output_dir,
+    )
+
+    # Save trajectory and latest computed metrics for future use.
     np.savez_compressed(
-        output_dir / "trajectory_distribution_six_flow.npz",
+        data_file,
         t=trajectory.t,
         y=trajectory.y,
+        runtime_seconds=trajectory.runtime_seconds,
         **metrics,
     )
 
@@ -131,7 +170,12 @@ def main() -> None:
         f"max dual-invariant drift={np.max(metrics['dual_invariant_error']):.8e}\n"
         f"runtime={trajectory.runtime_seconds:.4f} s\n"
     )
-    (output_dir / "summary.txt").write_text(summary, encoding="utf-8")
+
+    (output_dir / "summary.txt").write_text(
+        summary,
+        encoding="utf-8",
+    )
+
     print(summary)
     print(f"Outputs: {output_dir.resolve()}")
 
