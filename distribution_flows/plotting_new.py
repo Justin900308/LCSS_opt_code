@@ -9,7 +9,7 @@ from functions import AnalyticalSolution, SixFlowSystem
 from integrator import Trajectory
 
 # Use one consistent 16 pt font everywhere, including tick labels and legends.
-FONT_SIZE = 22
+FONT_SIZE = 18
 plt.rcParams.update(
     {
         "pdf.fonttype": 42,
@@ -19,7 +19,7 @@ plt.rcParams.update(
         "axes.labelsize": FONT_SIZE,
         "xtick.labelsize": FONT_SIZE,
         "ytick.labelsize": FONT_SIZE,
-        "legend.fontsize": FONT_SIZE,
+        "legend.fontsize": 16,
         "figure.titlesize": FONT_SIZE,
     }
 )
@@ -171,14 +171,15 @@ def save_plots(
 
     histories = (metrics["x1"], metrics["x2"])
     populations = (system.pop1, system.pop2)
-    rho_labels = (r"$\rho_1$", r"$\rho_2$")
+    rho_labels = (r"\rho_1", r"\rho_2")
 
     # ------------------------------------------------------------------
     # Combined figure: 2 rows x 3 columns.
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(2, 3, figsize=(20.0, 11.5), sharex="col")
+    fig, axes = plt.subplots(2, 3, figsize=(20.0, 11.5))
 
     # ---------------- Top row: same convergence three columns ----------------
+    axes[0, 0].set_xlim([0.1, 20])
     axes[0, 0].loglog(
         t,
         gap,
@@ -193,11 +194,11 @@ def save_plots(
         label=rf"$O((1+t)^{{-{system.params.p:g}}})$",
     )
     axes[0, 0].set_xlabel("time")
-    axes[0, 0].set_ylabel("dual / saddle gap")
+    axes[0, 0].set_ylabel("Dual / saddle gap")
     axes[0, 0].grid(True, which="both", alpha=0.3)
-    axes[0, 0].legend(fontsize=FONT_SIZE, loc="best", frameon=True)
-
-    axes[0, 1].semilogy(
+    axes[0, 0].legend(loc="best", frameon=True)
+    axes[0, 1].set_xlim([0.1, 20])
+    axes[0, 1].loglog(
         t,
         objective_gap,
         linewidth=2.1,
@@ -211,11 +212,11 @@ def save_plots(
         label=rf"$O((1+t)^{{-{system.params.p:g}}})$",
     )
     axes[0, 1].set_xlabel("time")
-    axes[0, 1].set_ylabel("objective gap")
+    axes[0, 1].set_ylabel("Objective gap")
     axes[0, 1].grid(True, which="both", alpha=0.3)
-    axes[0, 1].legend(fontsize=FONT_SIZE, loc="best", frameon=True)
-
-    axes[0, 2].semilogy(
+    axes[0, 1].legend(loc="best", frameon=True)
+    axes[0, 2].set_xlim([0.1, 20])
+    axes[0, 2].loglog(
         t,
         residual_squared,
         linewidth=2.1,
@@ -236,12 +237,12 @@ def save_plots(
         label=rf"$O((1+t)^{{-{system.params.p:g}}})$",
     )
     axes[0, 2].set_xlabel("time")
-    axes[0, 2].set_ylabel(r"squared residue")
+    axes[0, 2].set_ylabel(r"Squared residue")
     axes[0, 2].grid(True, which="both", alpha=0.3)
-    axes[0, 2].legend(fontsize=FONT_SIZE, loc="best", frameon=True)
+    axes[0, 2].legend(loc="best", frameon=True)
 
     # ---------------- Bottom-left: W2^2 plot ----------------
-    axes[1, 0].semilogy(
+    axes[1, 0].loglog(
         t,
         w2_squared1,
         linewidth=2.1,
@@ -254,9 +255,9 @@ def save_plots(
         label=r"$W_2^2(\rho_2(t),\rho_2^\star)$",
     )
     axes[1, 0].set_xlabel("time")
-    axes[1, 0].set_ylabel(r"$W_2^2$")
+    axes[1, 0].set_ylabel(r"Squared $W_2$")
     axes[1, 0].grid(True, which="both", alpha=0.3)
-    axes[1, 0].legend(fontsize=FONT_SIZE, loc="best", frameon=True)
+    axes[1, 0].legend(loc="best", frameon=True)
 
     # ---------------- Bottom-middle and bottom-right: compressed snapshots ----------------
     snapshot_time_labels = [
@@ -282,19 +283,19 @@ def save_plots(
                 density,
                 linestyle=style,
                 linewidth=lw,
-                label=rf"{rho_label} at {time_label}",
+                label=rf"${rho_label}$ at {time_label}",
             )
 
         ax.plot(
             grid,
             optimal_density,
             linewidth=2.5,
-            label=rf"{rho_label}^\star",
+            label=rf"${rho_label}^\star$",
         )
         ax.set_xlabel("x")
-        ax.set_ylabel("density")
+        ax.set_ylabel("Density snaps")
         ax.grid(alpha=0.25)
-        ax.legend(fontsize=0.8 * FONT_SIZE, loc="best", frameon=True)
+        ax.legend( loc="best", frameon=True)
 
     fig.subplots_adjust(wspace=0.32, hspace=0.28)
     _save_figure(fig, output_dir / "combined_convergence_w2_snapshots.pdf", paths)
