@@ -200,10 +200,7 @@ def analytical_constrained_solution(
             f_left, f_right = residual(left), residual(right)
             if f_left >= 0.0 >= f_right:
                 break
-                break
             radius *= 2.0
-        else:
-            raise RuntimeError("Could not bracket the analytical multiplier.")
         multiplier = float(brentq(residual, left, right, xtol=1e-13, rtol=1e-13))
 
     mean1, variance1 = pop1.tilted_moments(multiplier)
