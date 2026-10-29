@@ -5,8 +5,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
 import numpy as np
+import ot
+from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import brentq
-from scipy.special import logsumexp, ndtr
+from scipy.special import logsumexp
+from scipy.stats import entropy
 
 from grad import (
     INTERACTION_METHODS,
@@ -30,16 +33,7 @@ class FlowParameters:
     epsilon: float = 0.03
     variance_floor: float = 1e-8
     metric_bins: int = 80
-
-    def __post_init__(self) -> None:
-        if self.p <= 0.0 or self.penalty_mu <= 0.0:
-            raise ValueError("Require p>0 and penalty_mu>0.")
-        if self.damping_zeta < 0.0:
-            raise ValueError("Require damping_zeta>=0.")
-        if self.epsilon <= 0.0 or self.variance_floor <= 0.0:
-            raise ValueError("epsilon and variance_floor must be positive.")
-        if self.metric_bins < 32:
-            raise ValueError("metric_bins must be at least 32.")
+    metric_grid_size: int = 2048
 
 
 @dataclass(frozen=True)
@@ -380,7 +374,9 @@ def _smoothed_histogram_kl_against_density_series(
     support_points: np.ndarray,
     bins: int,
 ) -> np.ndarray:
-    """Estimate the KL objective used in the convergence plot."""
+    """Estimate KL with SciPy from smoothed empirical histogram masses."""
+
+    # Create histogram
     history = np.asarray(particle_history, dtype=float)
     support = np.asarray(support_points, dtype=float)
     lower = min(float(np.min(history)), float(np.min(support)))
@@ -390,26 +386,27 @@ def _smoothed_histogram_kl_against_density_series(
     centers = 0.5 * (edges[:-1] + edges[1:])
     widths = np.diff(edges)
 
-    reference_mass = np.maximum(reference_density(centers) * widths, 1e-300)
+    # Discretize the smooth reference law on the same bins.
+    reference_mass = np.maximum(
+        np.asarray(reference_density(centers), dtype=float) * widths,
+        np.finfo(float).tiny,
+    )
     reference_mass /= np.sum(reference_mass)
-    offsets = np.arange(-5, 6, dtype=float)
-    kernel = np.exp(-0.5 * (offsets / 1.5) ** 2)
-    kernel /= np.sum(kernel)
 
     def estimate(particles: np.ndarray) -> float:
         counts, _ = np.histogram(particles, bins=edges)
-        empirical_mass = np.convolve(counts.astype(float), kernel, mode="same")
+
+        # Smooth the empirical density estimate.
+        empirical_mass = gaussian_filter1d(
+            counts.astype(float), sigma=1.5, mode="constant"
+        )
         empirical_mass = np.maximum(empirical_mass, 0.0)
         empirical_mass /= np.sum(empirical_mass)
-        positive = empirical_mass > 0.0
-        return float(
-            np.sum(
-                empirical_mass[positive]
-                * np.log(empirical_mass[positive] / reference_mass[positive])
-            )
-        )
 
-    return np.asarray([estimate(particles) for particles in history])
+        # computes D_KL(pk || qk).
+        return float(entropy(empirical_mass, reference_mass))
+
+    return np.asarray([estimate(particles) for particles in history], dtype=float)
 
 
 def _population_support_points(
@@ -417,7 +414,7 @@ def _population_support_points(
     multiplier: float,
     standard_deviations: float = 8.0,
 ) -> np.ndarray:
-    """Support for the histogram objective diagnostic."""
+    """Support points covering both the target and constrained-optimum laws."""
     target_means = np.asarray(population.target_means)
     target_std = np.sqrt(np.asarray(population.target_variances))
     _, optimal_means, optimal_variances = population.tilted_parameters(multiplier)
@@ -432,112 +429,67 @@ def _population_support_points(
     )
 
 
-
-def _optimal_quantiles_at_probabilities(
+def _discretized_optimal_distribution(
     population: PopulationConfig,
     multiplier: float,
-    probabilities: np.ndarray,
-) -> np.ndarray:
-    """Invert the exact constrained-optimum CDF at requested probabilities.
-
-    This helper uses the analytical form already encoded by
-    ``PopulationConfig.tilted_parameters``.  Under the current model, an
-    affine exponential tilt of a Gaussian-mixture target remains an exact
-    Gaussian mixture.
+    grid_size: int,
+    standard_deviations: float = 8.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return a deterministic weighted-grid approximation of rho^*.
     """
-    probabilities = np.asarray(probabilities, dtype=float)
-    if probabilities.ndim != 1 or probabilities.size == 0:
-        raise ValueError("probabilities must be a nonempty one-dimensional array.")
-    if np.any((probabilities <= 0.0) | (probabilities >= 1.0)):
-        raise ValueError("probabilities must lie strictly between 0 and 1.")
-
-    weights, means, variances = population.tilted_parameters(multiplier)
+    _, means, variances = population.tilted_parameters(multiplier)
     std = np.sqrt(variances)
+    lower = float(np.min(means - standard_deviations * std))
+    upper = float(np.max(means + standard_deviations * std))
 
-    def cdf(x: float) -> float:
-        z = (x - means) / std
-        return float(np.sum(weights * ndtr(z)))
-
-    lower = float(np.min(means - 10.0 * std))
-    upper = float(np.max(means + 10.0 * std))
-
-    span = max(upper - lower, 1.0)
-    while cdf(lower) > float(np.min(probabilities)):
-        lower -= span
-        span *= 2.0
-
-    span = max(upper - lower, 1.0)
-    while cdf(upper) < float(np.max(probabilities)):
-        upper += span
-        span *= 2.0
-
-    return np.asarray(
-        [
-            brentq(
-                lambda x, q=q: cdf(x) - q,
-                lower,
-                upper,
-                xtol=1e-12,
-                rtol=1e-12,
-            )
-            for q in probabilities
-        ],
-        dtype=float,
+    edges = np.linspace(lower, upper, grid_size + 1)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    widths = np.diff(edges)
+    optimal_masses = np.maximum(
+        population.tilted_density(centers, multiplier) * widths,
+        0.0,
     )
+    optimal_masses /= np.sum(optimal_masses)
+    return centers, optimal_masses
 
 
-def _empirical_w2_squared_series(
+def w2_squared_fcn(
     particle_history: np.ndarray,
     population: PopulationConfig,
     multiplier: float,
-    quadrature_order: int = 8,
+    grid_size: int,
 ) -> np.ndarray:
-    r"""Compute 1D W_2^2 between an empirical law and rho^*.
-
-    For equal-weight particles x_(1) <= ... <= x_(N), the empirical quantile
-    is piecewise constant,
-
-        Q_N(u) = x_(j),   u in ((j-1)/N, j/N].
-
-    Hence
-
-        W_2^2(rho_N, rho^*)
-          = sum_j int_{(j-1)/N}^{j/N} |x_(j) - Q^*(u)|^2 du.
-
-    The probability integrals are evaluated with Gauss-Legendre quadrature.
-    No parametric model is assumed for the current particle distribution.
+    """Compute W_2^2 between the particle distribution and the optimal distribution.
     """
+
     history = np.asarray(particle_history, dtype=float)
-    if history.ndim != 2:
-        raise ValueError("particle_history must have shape (n_times, n_particles).")
-    if quadrature_order < 2:
-        raise ValueError("quadrature_order must be at least 2.")
 
-    n_particles = history.shape[1]
-    nodes, weights = np.polynomial.legendre.leggauss(quadrature_order)
-
-    # Map the Gauss-Legendre nodes from [-1,1] into each empirical quantile
-    # interval ((j-1)/N, j/N).  These probabilities are strictly inside (0,1).
-    j = np.arange(n_particles, dtype=float)[:, None]
-    probabilities = (j + 0.5 * (nodes[None, :] + 1.0)) / n_particles
-    flat_probabilities = probabilities.ravel()
-
-    optimal_quantiles = _optimal_quantiles_at_probabilities(
-        population, multiplier, flat_probabilities
-    ).reshape(n_particles, quadrature_order)
-
-    sorted_particles = np.sort(history, axis=1)
-    squared_difference = (
-        sorted_particles[:, :, None] - optimal_quantiles[None, :, :]
-    ) ** 2
-
-    # Each interval has width 1/N. Mapping [-1,1] to that interval contributes
-    # the factor 1/(2N).
-    return np.sum(
-        squared_difference * weights[None, None, :] / (2.0 * n_particles),
-        axis=(1, 2),
+    # Discrete approximation of the optimal distribution.
+    centers, optimal_masses = _discretized_optimal_distribution(
+        population=population,
+        multiplier=multiplier,
+        grid_size=grid_size,
     )
 
+    # Current distribution
+    num_particles = history.shape[1]
+    particle_masses = np.full(
+        num_particles,
+        1.0 / num_particles,
+        dtype=float,
+    )
+
+    # Compute W_2^2 at every time step.
+    w2_squared = np.empty(history.shape[0], dtype=float)
+    for time_index, particle_positions in enumerate(history):
+        w2_squared[time_index] = ot.wasserstein_1d(
+            u_values=particle_positions,
+            v_values=centers,
+            u_weights=particle_masses,
+            v_weights=optimal_masses,
+            p=2,
+        )
+    return w2_squared
 
 def trajectory_metrics(
     trajectory: "Trajectory",
@@ -596,14 +548,14 @@ def trajectory_metrics(
         (var1 - optimum.variance1) ** 2 + (var2 - optimum.variance2) ** 2
     )
 
-    # 1D squared 2-Wasserstein distance to the constrained optimum.
-    # The current laws are empirical particle distributions and need no
-    # Gaussian/GMM approximation: sorting gives their exact empirical quantiles.
-    w2_squared1 = _empirical_w2_squared_series(
-        x1, system.pop1, optimum.multiplier
+    # 1D squared 2-Wasserstein distance to the constrained optimum, computed
+    # by POT.  The evolving laws remain the raw equal-weight particle measures;
+    # the continuous analytical optimum is represented by a fine weighted grid.
+    w2_squared1 = w2_squared_fcn(
+        x1, system.pop1, optimum.multiplier, system.params.metric_grid_size
     )
-    w2_squared2 = _empirical_w2_squared_series(
-        x2, system.pop2, optimum.multiplier
+    w2_squared2 = w2_squared_fcn(
+        x2, system.pop2, optimum.multiplier, system.params.metric_grid_size
     )
     w2_squared = w2_squared1 + w2_squared2
 

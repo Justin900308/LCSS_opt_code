@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from functions import (
+from distribution_flow_package_metrics import (
     FlowParameters,
     PopulationConfig,
     SixFlowSystem,
